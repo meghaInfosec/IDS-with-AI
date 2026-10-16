@@ -25,14 +25,22 @@ for col in columns_to_drop:
     if col in df.columns:
         df.drop(col, axis=1, inplace=True)
 
-# 2. Encode text columns into numbers
-categorical_columns = ['proto', 'service', 'state']
+# 2. Encode any text (object dtype) columns into numbers.
+#    NOTE: earlier this listed fixed names ['proto','service','state'], but this
+#    particular CSV already ships those as xProt/xServ/xState and pre-encoded as
+#    integers. Detecting object dtype columns automatically makes this work
+#    regardless of the exact column names/casing in whichever CSV is used.
+categorical_columns = list(df.select_dtypes(include='object').columns)
 label_encoders = {}
 for col in categorical_columns:
-    if col in df.columns:
-        le = LabelEncoder()
-        df[col] = le.fit_transform(df[col].astype(str))
-        label_encoders[col] = le
+    le = LabelEncoder()
+    df[col] = le.fit_transform(df[col].astype(str))
+    label_encoders[col] = le
+
+if categorical_columns:
+    print(f"[*] Encoded text columns: {categorical_columns}")
+else:
+    print("[*] No text columns found - dataset is already numeric.")
 
 # 3. Separate features (X) and target label (y)
 X = df.drop('label', axis=1)

@@ -7,7 +7,24 @@ import queue
 import time
 from collections import defaultdict
 
-print("[*] Initializing IDS (Strict Mode - No False Positives)...")
+import ml_detector
+from flow_tracker import FlowTracker
+
+print("[*] Initializing IDS (Hybrid: Rule-Based + ML)...")
+
+# Load the trained Random Forest model. This is the piece that was never
+# wired in before - train_model.py produced the .pkl files but nothing
+# loaded them for live traffic.
+try:
+    ml_detector.load()
+    ML_ENABLED = True
+except FileNotFoundError as e:
+    print(f"[!] {e}")
+    print("[!] Continuing with rule-based detection only.")
+    ML_ENABLED = False
+
+flow_tracker = FlowTracker()
+ML_CONFIDENCE_THRESHOLD = 70  # only trust an ML "Malicious" verdict above this
 
 # --- Optimization Settings ---
 BATCH_SIZE = 50
@@ -156,6 +173,27 @@ def detect_attack(src_ip, dst_ip, dst_port, protocol, flags_info):
 
     return alerts, confidence
 
+def score_ready_flows():
+    """Pull any flows the tracker considers complete and run them through
+    the trained Random Forest. Returns a list of db-ready alert tuples."""
+    if not ML_ENABLED:
+        return []
+
+    records = []
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for (src_ip, dst_ip, protocol), feature_dict in flow_tracker.pop_ready_flows():
+        label, confidence = ml_detector.score(feature_dict)
+        if label == "Malicious" and confidence >= ML_CONFIDENCE_THRESHOLD:
+            status = "Malicious"
+            reason = f"ML model (RandomForest) flagged this flow, confidence {confidence}%"
+            print(f"[!] ML DETECTED: {src_ip} -> {dst_ip} ({protocol}) | {reason}")
+        else:
+            status = "Normal"
+            reason = ""
+        records.append((timestamp, src_ip, dst_ip, protocol, status, 0, int(confidence), reason))
+    return records
+
+
 # --- Thread 2: Packet Processor ---
 def process_packets():
     normal_count = 0
@@ -189,7 +227,14 @@ def process_packets():
                         flags_info = "SYN"
                 
                 packet_metadata.append((src_ip, dst_ip, protocol, dst_port, flags_info))
-                
+
+                # Feed the flow tracker so the ML model has aggregated
+                # flow-level stats to score once this flow is "ready".
+                pkt_len = len(pkt)
+                ttl = pkt[IP].ttl if IP in pkt else 0
+                win = pkt[TCP].window if TCP in pkt else 0
+                flow_tracker.update(src_ip, dst_ip, protocol, pkt_len, ttl, win, direction="fwd")
+
             except queue.Empty:
                 break
         
@@ -202,7 +247,7 @@ def process_packets():
         for i in range(len(batch)):
             src_ip, dst_ip, protocol, dst_port, flags_info = packet_metadata[i]
             
-            # Check detection
+            # Check detection (fast, per-packet rules: scans, malformed flags)
             alerts, confidence = detect_attack(src_ip, dst_ip, dst_port, protocol, flags_info)
             
             # Only flag if HIGH confidence (90%+)
@@ -218,7 +263,12 @@ def process_packets():
                 alert_reason = ""
             
             db_records.append((timestamp, src_ip, dst_ip, protocol, status, dst_port, confidence, alert_reason))
-        
+
+        # Any flows that have gathered enough packets (or gone idle) get
+        # scored by the Random Forest model here, separate from the
+        # per-packet rules above.
+        db_records.extend(score_ready_flows())
+
         db_queue.put(db_records)
         
         # Print summary every 100 packets
@@ -251,11 +301,11 @@ def database_worker():
 
 # --- Main Execution ---
 if __name__ == "__main__":
-    print(f"[*] Detection Threshold: {SCAN_THRESHOLD}+ ports in {TIME_WINDOW}s")
+    print(f"[*] Rule-based: {SCAN_THRESHOLD}+ ports in {TIME_WINDOW}s, NULL/XMAS/FIN scans (90%+ confidence)")
     print(f"[*] Temporary block TTL: {BLOCK_TTL}s")
     print("[*] Whitelisted: DNS (1.1.1.1, 8.8.8.8), Multicast, Broadcast")
-    print("[*] Only detects: NULL scans, XMAS scans, FIN scans, massive port scans")
-    print("[*] Confidence required: 90%+\n")
+    print(f"[*] ML-based: Random Forest scores each flow once it has enough packets ({ML_CONFIDENCE_THRESHOLD}%+ confidence)")
+    print(f"[*] ML model loaded: {ML_ENABLED}\n")
     
     db_thread = threading.Thread(target=database_worker, daemon=True)
     db_thread.start()
