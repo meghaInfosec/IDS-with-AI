@@ -1,6 +1,6 @@
 # 🛡️ IDS with AI
 
-> **AI-Driven Intrusion Detection System for Real-Time Network Threat Detection**
+> **Hybrid Intrusion Detection System for Real-Time Network Threat Detection — Rule-Based + Machine Learning**
 
 [![Python](https://img.shields.io/badge/Python-3.8+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![Scikit-Learn](https://img.shields.io/badge/Scikit--Learn-F7931E?style=for-the-badge&logo=scikit-learn&logoColor=white)](https://scikit-learn.org)
@@ -17,27 +17,33 @@
 - [Installation](#-installation)
 - [Usage](#-usage)
 - [Dataset](#-dataset)
-- [Screenshots](#-screenshots)
+- [Model Performance](#-model-performance)
+- [Known Limitations](#-known-limitations)
 - [Project Structure](#-project-structure)
-- [Contributing](#-contributing)
 - [Author](#-author)
 
 ---
 
 ## 🎯 About
 
-**IDS with AI** is an intelligent **Intrusion Detection System** that leverages **Machine Learning** to detect and alert malicious network activities in real-time. 
+**IDS with AI** is a hybrid **Intrusion Detection System** that combines
+fast **rule-based detection** with a trained **Random Forest** machine
+learning model to flag malicious network activity in real time.
 
-Built with the renowned **UNSW-NB15** dataset, this system employs a **Random Forest classifier** to achieve high-accuracy detection of network intrusions, distinguishing between **Normal** and **Malicious** traffic patterns.
+Built on the **UNSW-NB15** dataset, the model performs **binary
+classification**: distinguishing **Normal** traffic from **Malicious**
+traffic. It does not currently identify *which type* of attack occurred
+(see [Known Limitations](#-known-limitations)).
 
 ### 🔥 Key Highlights
 
 | Aspect | Details |
 |--------|---------|
-| 🧠 **AI Model** | Random Forest Classifier |
+| 🧠 **ML Model** | Random Forest Classifier (binary: Normal/Malicious) |
+| 📏 **Rule Engine** | Port-scan threshold, NULL/XMAS/FIN TCP flag detection |
 | 📊 **Dataset** | UNSW-NB15 (42 features) |
-| ⚡ **Processing** | Real-time packet analysis |
-| 🌐 **Dashboard** | Auto-refreshing web UI |
+| ⚡ **Processing** | Real-time packet capture + flow aggregation |
+| 🌐 **Dashboard** | Auto-refreshing web UI (Flask) |
 | 💾 **Storage** | SQLite database logging |
 
 ---
@@ -45,13 +51,15 @@ Built with the renowned **UNSW-NB15** dataset, this system employs a **Random Fo
 ## ✨ Features
 
 ```
-✅ AI-Powered Detection     → Random Forest ML model with ~85-90% accuracy
-✅ Real-time Monitoring      → Live network packet capture using Scapy  
-✅ Web Dashboard             → Beautiful, responsive UI with auto-refresh
-✅ Threat Alerts             → Instant visual notifications for malicious activity
+✅ Hybrid Detection          → Rule-based engine + Random Forest ML model, run together
+✅ Real-time Monitoring      → Live network packet capture using Scapy
+✅ Flow Aggregation          → Groups packets into flows so the ML model gets the
+                                connection-level features it was trained on
+✅ Web Dashboard             → Auto-refreshing UI with search, filters, and confidence bands
+✅ Threat Alerts             → Visual Malicious/Normal badges with the reason for each flag
 ✅ Persistent Logging        → SQLite database for historical analysis
 ✅ Binary Classification     → Normal (0) vs Malicious (1) detection
-✅ Modular Design            → Easy to extend with additional models
+✅ Demo Mode                 → simulate_attack.py shows alerts without needing a real attacker
 ```
 
 ---
@@ -59,23 +67,32 @@ Built with the renowned **UNSW-NB15** dataset, this system employs a **Random Fo
 ## 🏗️ Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         IDS with AI Architecture                        │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│   ┌──────────────┐      ┌──────────────┐      ┌──────────────┐         │
-│   │   Network    │─────▶│   AI Sniffer │─────▶│   SQLite     │         │
-│   │   Traffic    │      │  (Scapy+ML)  │      │   Database   │         │
-│   └──────────────┘      └──────────────┘      └──────┬───────┘         │
-│                                                      │                  │
-│                                                      ▼                  │
-│   ┌──────────────┐      ┌──────────────┐      ┌──────────────┐         │
-│   │   Web        │◀─────│    Flask     │◀─────│  Detection   │         │
-│   │   Browser    │      │    Server    │      │     Logs     │         │
-│   └──────────────┘      └──────────────┘      └──────────────┘         │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
+┌──────────────┐    ┌───────────────┐    ┌──────────────────┐    ┌──────────────┐
+│   Network    │───▶│  sniffer.py   │───▶│  flow_tracker.py  │───▶│ ml_detector.py│
+│   Traffic    │    │ (rule engine) │    │ (groups packets   │    │ (loads model, │
+└──────────────┘    └───────┬───────┘    │  into flows)      │    │  scores flow) │
+                             │            └──────────────────┘    └──────┬───────┘
+                             │  per-packet alerts                        │ flow verdict
+                             ▼                                           ▼
+                        ┌─────────────────────────────────────────────────┐
+                        │              ids_logs.db (SQLite)                │
+                        └───────────────────────┬───────────────────────────┘
+                                                 ▼
+                        ┌──────────────┐   ┌──────────────┐
+                        │   app.py     │──▶│  Web Browser  │
+                        │ (Flask)      │   │  Dashboard    │
+                        └──────────────┘   └──────────────┘
 ```
+
+Detection happens in two independent layers that both write to the same
+database:
+
+1. **Rule engine** (in `sniffer.py`) — fires instantly per packet for
+   known attack signatures (port scans, NULL/XMAS/FIN scans).
+2. **ML model** (`flow_tracker.py` + `ml_detector.py`) — groups packets
+   belonging to the same `(src_ip, dst_ip, protocol)` flow, builds a
+   feature row shaped like the training data, and asks the trained
+   Random Forest to classify it once the flow has enough packets.
 
 ---
 
@@ -84,62 +101,83 @@ Built with the renowned **UNSW-NB15** dataset, this system employs a **Random Fo
 ### Prerequisites
 
 - Python 3.8 or higher
-- Git
 - pip (Python package manager)
+- **Windows only:** [Npcap](https://npcap.com/#download) (install with
+  "WinPcap API-compatible Mode" checked) — required for Scapy to capture
+  live packets.
 
-### Step 1: Clone Repository
+### Step 1: Clone the repository
 
 ```bash
-git clone https://github.com/shamanthwick/IDS-With-AI.git
-cd IDS-With-AI
+git clone https://github.com/meghaInfosec/IDS-with-AI.git
+cd IDS-with-AI
 ```
 
-### Step 2: Install Dependencies
+### Step 2: Create a virtual environment and install dependencies
 
 ```bash
+python -m venv venv
+venv\Scripts\activate        # Windows
+# source venv/bin/activate   # Linux/Mac
+
 pip install -r requirements.txt
 ```
 
-### Step 3: Download Dataset
-
-Download the UNSW-NB15 training dataset:
-- Search for `UNSW_NB15_training-set.csv` online
-- Place it in the project root folder
-
-### Step 4: Train AI Model
+### Step 3: Train the model (optional — pre-trained files are included)
 
 ```bash
 python train_model.py
 ```
 
-This generates:
-- `ids_rf_model.pkl` → Trained Random Forest model
-- `ids_scaler.pkl` → Feature scaler
+This reads `UNSW_NB15_training-set.csv` and produces:
+- `ids_rf_model.pkl` → trained Random Forest model
+- `ids_scaler.pkl` → feature scaler
+- `ids_model_config.pkl` → feature names/order the model expects
 
 ---
 
 ## 🚀 Usage
 
-### 1️⃣ Start Network Sniffer
+### 1️⃣ Start the sniffer (needs admin/root — live packet capture requires it)
 
 ```bash
+# Windows: run CMD "as Administrator"
 python sniffer.py
+
+# Linux/Mac
+sudo python3 sniffer.py
 ```
 
-### 2️⃣ Launch Web Dashboard
+Confirm `[*] ML model loaded: True` appears in the output — this means
+both the rule engine and the ML model are active.
 
-Open a new terminal:
+### 2️⃣ Launch the dashboard (separate terminal, while sniffer.py keeps running)
 
 ```bash
 python app.py
 ```
 
-### 3️⃣ Access Dashboard
-
-Open browser and navigate to:
+### 3️⃣ Open the dashboard
 
 ```
 http://127.0.0.1:5000
+```
+
+### 4️⃣ (Optional) See a Malicious alert without a real attacker
+
+```bash
+python simulate_attack.py
+```
+
+Refresh the dashboard — simulated Malicious rows appear (clearly labeled
+`SIMULATED` in the reason text), including one routed through the actual
+ML model so you can see both detection paths in action.
+
+To trigger a **real** rule-based detection safely, scan your own machine
+only:
+```bash
+nmap -sN -p 1-100 127.0.0.1      # NULL scan
+nmap -sX -p 1-100 127.0.0.1      # XMAS scan
 ```
 
 ---
@@ -149,10 +187,10 @@ http://127.0.0.1:5000
 | Feature | Description |
 |---------|-------------|
 | 📊 **Live Statistics** | Real-time threat counts and totals |
-| 📋 **Detection Logs** | Recent network activity table |
-| 🔄 **Auto-Refresh** | Updates every 3 seconds |
+| 📋 **Detection Logs** | Recent network activity table, searchable and filterable |
+| 🔎 **Filters** | By status, protocol, and minimum confidence |
 | 🏷️ **Status Badges** | Color-coded Normal/Malicious indicators |
-| 🎨 **Dark Theme** | Modern, eye-friendly UI |
+| 📝 **Alert Reason** | Shows whether a rule or the ML model flagged each row, and why |
 
 ---
 
@@ -164,115 +202,113 @@ http://127.0.0.1:5000
 |----------|-------|
 | **Name** | UNSW-NB15 |
 | **Type** | Network Intrusion Detection |
-| **Classes** | Binary (Normal/Malicious) |
+| **Classes used by this model** | Binary (Normal/Malicious) |
 | **Features** | 42 network traffic features |
 | **Source** | University of New South Wales |
 
-### Attack Categories Covered
+> **Note:** The full UNSW-NB15 dataset also ships an `attack_cat` column
+> that labels *which* attack family a malicious row belongs to (Fuzzers,
+> Analysis, Backdoors, DoS, Exploits, Generic, Reconnaissance, Shellcode,
+> Worms). **This project drops that column during training**, so the
+> model only learns Normal-vs-Malicious — it cannot currently tell you
+> which of those 9 categories a detected attack falls into. Turning this
+> into a multi-class classifier (training on `attack_cat` instead of the
+> binary `label`) is a natural next step; see Known Limitations.
 
-- 🖥️ Fuzzers
-- 🔍 Analysis
-- 🚪 Backdoors
-- 💥 DoS (Denial of Service)
-- 🎯 Exploits
-- 🔀 Generic
-- 📡 Reconnaissance
-- 💉 Shellcode
-- 🐛 Worms
+### Possible datasets for future extension
 
----
-
-## 🚀 Additional Datasets & Future Improvements
-
-To enhance the robustness of this IDS, future iterations can incorporate more modern and diverse datasets:
-
-### 1. CSE-CIC-IDS2018
-A large-scale dataset created by the Canadian Institute for Cybersecurity (CIC) representing modern network traffic environments.
-- **Key Features:**
-    - Capture period of 10 days with realistic background traffic.
-    - Extensive feature set (80+ network flow features).
-    - Large volume of data (terabytes of raw traffic).
-- **Types of Attacks:** Brute Force, DoS, DDoS, Heartbleed, Botnet, Infiltration, and Web Attacks.
-- **Why it's Modern:** It captures much newer attack vectors and more complex network topologies compared to UNSW-NB15.
-
-### 2. ToN-IoT
-A heterogeneous dataset collecting data from Telemetry, Operating Systems, and Network (ToN) sensors in an IoT/IIoT environment.
-- **Key Features:**
-    - Multi-layered data including Network traffic, IoT telemetry, and OS logs.
-    - Realistic Industrial IoT (IIoT) environment simulation.
-    - High-dimensional and diverse feature sets.
-- **Types of Attacks:** DoS, DDoS, Ransomware, Backdoor, Injection, XSS, Scanning, and MitM.
-- **Why it's Modern:** Specifically designed for the IoT era, addressing vulnerabilities in smart devices that traditional datasets like UNSW-NB15 overlook.
-
-### 3. BoT-IoT
-A dataset created in a realistic network environment specifically to capture various botnet attack scenarios.
-- **Key Features:**
-    - High-density Botnet-specific traffic patterns.
-    - Includes 5% sub-sampled versions for efficient research and training.
-    - Detailed per-packet and per-flow statistical metrics.
-- **Types of Attacks:** DDoS, DoS, OS Fingerprinting, Service Discovery, Keylogging, and Data Exfiltration.
-- **Why it's Modern:** Provides a much more specialized and deep focus on botnet behaviors, which have evolved significantly since the release of earlier datasets.
+- **CSE-CIC-IDS2018** — modern traffic, 80+ flow features, covers Brute
+  Force, DoS/DDoS, Heartbleed, Botnet, Infiltration, Web Attacks.
+- **ToN-IoT** — IoT/IIoT telemetry + network + OS logs, covers DoS/DDoS,
+  Ransomware, Backdoor, Injection, XSS, Scanning, MitM.
+- **BoT-IoT** — focused on botnet behavior, covers DDoS/DoS, OS
+  Fingerprinting, Service Discovery, Keylogging, Data Exfiltration.
 
 ---
 
 ## 📈 Model Performance
 
-```
-┌────────────────────────────────────────────────────┐
-│              Model Evaluation Results              │
-├────────────────────────────────────────────────────┤
-│  Metric       │  Score                             │
-├───────────────┼────────────────────────────────────┤
-│  Accuracy     │  ~85-90%                           │
-│  Precision    │  ~85%                              │
-│  Recall       │  ~85%                              │
-│  F1-Score     │  ~85%                              │
-└────────────────────────────────────────────────────┘
+These numbers are from an actual run of `train_model.py` on this
+project's dataset, not estimates:
 
-*Results may vary based on training data and network conditions
 ```
+┌────────────────────────────────────────────────────────────┐
+│                  Model Evaluation Results                  │
+├────────────────────────────────────────────────────────────┤
+│  Metric                               │  Score              │
+├────────────────────────────────────────┼─────────────────────┤
+│  Accuracy (train/test split)          │  97.59%             │
+│  Accuracy (full held-out test CSV,    │  90.25%             │
+│   175,341 rows never trained on)      │                     │
+│  Precision (Normal / Malicious)       │  0.97 / 0.98        │
+│  Recall (Normal / Malicious)          │  0.98 / 0.97        │
+│  F1-score (Normal / Malicious)        │  0.97 / 0.98        │
+└────────────────────────────────────────────────────────────┘
+```
+
+These scores come from clean, pre-labeled CSV rows. **Live accuracy on
+real packet captures will be lower** — see Known Limitations below for
+why.
+
+---
+
+## ⚠️ Known Limitations
+
+Worth knowing, and good talking points if this project comes up in an
+interview:
+
+1. **Binary classification only.** The model distinguishes
+   Normal/Malicious; it does not identify the attack category, even
+   though the dataset supports it (the `attack_cat` column is dropped
+   during training).
+2. **Live flow features are incomplete.** `flow_tracker.py` can only
+   derive about half of the 42 trained features from raw packets alone
+   (duration, packet/byte counts, TTL, window size). Features that need
+   deep packet inspection or longer history — service type, HTTP-specific
+   fields, counts of recent connections to the same host — default to 0
+   rather than being guessed. This is why live accuracy is lower than the
+   90%+ seen on the clean test CSV.
+3. **Flow scoring has latency.** The ML path waits for a flow to gather
+   enough packets (or go idle) before scoring it, so it's not as
+   instantaneous as the per-packet rule engine.
+4. **SQLite is single-machine.** Fine for a demo/portfolio project; a
+   production deployment would want a proper database and a WSGI server
+   instead of Flask's development server.
 
 ---
 
 ## 📂 Project Structure
 
 ```
-IDS-With-AI/
+IDS-with-AI/
 │
-├── 📄 train_model.py          # AI model training script
-├── 📄 sniffer.py              # Network packet sniffer
-├── 📄 app.py                  # Flask web server
+├── 📄 train_model.py          # Trains the Random Forest (binary: Normal/Malicious)
+├── 📄 flow_tracker.py         # Groups live packets into flows for the ML model
+├── 📄 ml_detector.py          # Loads the trained model and scores a flow
+├── 📄 sniffer.py              # Packet capture + rule engine + ML scoring (hybrid)
+├── 📄 app.py                  # Flask dashboard
+├── 📄 simulate_attack.py      # Demo script — injects sample alerts, no real attacker needed
+├── 📄 test_capture.py         # Standalone check that Scapy can see your network interface
 ├── 📄 requirements.txt        # Python dependencies
-├── 📄 README.md               # Project documentation
 │
 ├── 📁 templates/
 │   └── 📄 index.html          # Dashboard UI
 │
-├── 🔧 .gitignore              # Git ignore rules
+├── 🔧 .gitignore
 │
-└── 📦 Generated Files (not in repo)
+└── 📦 Generated at runtime
     ├── ids_rf_model.pkl       # Trained model
     ├── ids_scaler.pkl         # Feature scaler
-    └── ids_logs.db            # Detection logs
+    ├── ids_model_config.pkl   # Feature names/order
+    └── ids_logs.db            # Detection logs (SQLite)
 ```
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Here's how you can help:
-
-1. 🍴 **Fork** the repository
-2. 🌿 Create a feature branch (`git checkout -b feature/AmazingFeature`)
-3. 💾 Commit your changes (`git commit -m 'Add AmazingFeature'`)
-4. 🚀 Push to the branch (`git push origin feature/AmazingFeature`)
-5. 🔄 Open a **Pull Request**
 
 ---
 
 ## 📄 License
 
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the **MIT License** — see the
+[LICENSE](LICENSE) file for details.
 
 ---
 
@@ -280,25 +316,14 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 
 | | |
 |---|---|
-| **GitHub** | [@shamanthwick](https://github.com/shamanthwick) |
-| **Email** | shamantharsingh@gmail.com |
-
----
-
-## 🙏 Acknowledgments
-
-- 🎓 **UNSW-NB15** Dataset creators
-- 🔧 **Scapy** developers
-- 🤖 **Scikit-learn** team
-- 🌐 **Flask** community
+| **GitHub** | [@meghaInfosec](https://github.com/meghaInfosec) |
+| **Email** | meghaiiitainfosec@gmail.com |
 
 ---
 
 <div align="center">
 
-### 🛡️ Made with ❤️ for Network Security
-
-**If you find this project useful, please ⭐ star this repository!**
+### 🛡️ Built for learning real-world network security + applied ML
 
 [⬆ Back to Top](#-ids-with-ai)
 
