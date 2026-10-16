@@ -280,8 +280,8 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 
 | | |
 |---|---|
-| **GitHub** | [@shamanthwick](https://github.com/shamanthwick) |
-| **Email** | shamantharsingh@gmail.com |
+| **GitHub** | [@megha](https://github.com/shamanthwick) |
+| **Email** | meghaiiitainfosec@gmail.com |
 
 ---
 
